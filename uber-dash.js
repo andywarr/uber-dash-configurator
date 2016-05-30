@@ -1,18 +1,4 @@
-var AWS = require('aws-sdk');
 var https = require('https');
-
-const region = 'us-west-2';
-const s3_endpoint = 's3-us-west-2.amazonaws.com';
-const ses_endpoint = 'email.us-west-2.amazonaws.com';
-
-var ses = new AWS.SES({apiVersion: '2010-12-01'});
-const email = process.env.EMAIL;
-var to = [email];
-var from = email;
-
-var s3 = new AWS.S3();
-const s3_bucket = 'requestuber';
-const s3_key = 'request-id';
 
 const token = process.env.TOKEN;
 
@@ -46,50 +32,33 @@ function callUber(event, context) {
 }
 
 function cancelUber(event, context) {
-    AWS.config.update({
-        'region': region,
-        'endpoint': s3_endpoint
-    });
+    var headers = {
+        'Authorization':  'Bearer ' + token,
+        'Content-Type':   'application/json'
+    };
+
+    var options = {
+        'host':    'api.uber.com',
+        'path': '/v1/requests/current',
+        'method':  'DELETE',
+        'headers': headers
+    };
     
-    var params = {'Bucket': s3_bucket, 'Key': s3_key};
-    s3.getObject(params, function(err, data) {
-        if (err) console.log(err);
-        else {
-            var request_id = data.Body.toString();
-            
-            data = JSON.stringify(request_id);
-            
-            var headers = {
-                'Authorization':  'Bearer ' + token,
-                'Content-Type':   'application/json',
-                'Content-Length': Buffer.byteLength(data)
-            };
+    var req = https.request(options, function(res) {
+        var body = '';
+        res.on('data', function (chunk) {
+            body += chunk;
+        });
         
-            var options = {
-                'host':    'api.uber.com',
-                'path':    '/v1/requests/' + request_id,
-                'method':  'DELETE',
-                'headers': headers
-            };
-            
-            var req = https.request(options, function(res) {
-                var body = '';
-                res.on('data', function (chunk) {
-                    body += chunk;
-                });
-                
-                res.on('end', function () {
-                    // Successfully cancelled Uber
-                    if (res.statusCode === successfully_cancelled_uber_status_code) {
-                        console.log('Uber cancelled. Status code: ' + res.statusCode);
-                    }
-                    context.done();
-                });
-            });
-            req.write(data);
-            req.end();
-        }
+        res.on('end', function () {
+            // Successfully cancelled Uber
+            if (res.statusCode === successfully_cancelled_uber_status_code) {
+                console.log('Uber cancelled. Status code: ' + res.statusCode);
+            }
+            context.done();
+        });
     });
+    req.end();
 }
 
 function requestUber(event, context, product_id, surge_confirmation_id) {
@@ -130,21 +99,8 @@ function requestUber(event, context, product_id, surge_confirmation_id) {
           
             // Successfully requested Uber
             if (res.statusCode === successfully_requested_uber_status_code) {
-                // Save request_id to S3 in case the user wants to cancel the Uber
                 console.log('Uber requested. Status code: ' + res.statusCode);
-                
-                AWS.config.update({
-                    'region': region,
-                    'endpoint': s3_endpoint
-                });
-                
-                var params = {'Bucket': s3_bucket, 'Key': s3_key, Body: parsed.request_id};
-                s3.upload(params, function(err, data) {
-                    if (err) console.log(err);
-                    else console.log(data);
-
-                    context.done();
-                });
+                context.done();
             }
             // Uber has surge pricing
             else if (res.statusCode === uber_surge_pricing_status_code && !surge_confirmation_id) {
@@ -165,7 +121,7 @@ function requestUber(event, context, product_id, surge_confirmation_id) {
                 
                     resp.on("end", function () {
                         var csrf_token_etc = body.substring(body.lastIndexOf('<input name="csrf_token" type="hidden" value="')+46);
-                        var csrf_token = csrf_token_etc = csrf_token_etc.substring(0, csrf_token_etc.indexOf('">'));
+                        var csrf_token = csrf_token_etc.substring(0, csrf_token_etc.indexOf('">'));
 
                         var data = {
                             'csrf_token': csrf_token
@@ -201,36 +157,6 @@ function requestUber(event, context, product_id, surge_confirmation_id) {
                         requ.end();
                     });
                 });
-                
-                // NO NEED TO SEND EMAIL. APPROVING SURGE PRICING PROGRAMMATICALLY
-                // AWS.config.update({
-                //     'region': region,
-                //     'endpoint': ses_endpoint
-                // });
-                // 
-                // var params = {
-                //         Destination: {
-                //             ToAddresses: to
-                //         },
-                //         Message: {
-                //             Body: {
-                //                 Text: {
-                //                     Data: 'Click here to accept surge pricing: ' + parsed.meta.surge_confirmation.href
-                //                 }
-                //             },
-                //             Subject: {
-                //                 Data: 'Accept surge pricing'
-                //             }
-                //         },
-                //         Source: from
-                //     };
-                // 
-                // ses.sendEmail(params, function(err, data) {
-                //     if (err) console.log(err);
-                //     else     console.log(data);
-                //     
-                //     context.done();
-                // });
             }
             else {
                 console.log('Uber request failed. Status code: ' + res.statusCode);
@@ -242,6 +168,5 @@ function requestUber(event, context, product_id, surge_confirmation_id) {
     req.write(data);
     req.end();
 }
-
 
 exports.handler = callUber;
